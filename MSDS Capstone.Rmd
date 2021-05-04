@@ -1,0 +1,763 @@
+---
+title: "MSDS Capstone"
+author: "Gabby Hendrix"
+date: "4/14/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Data
+
+```{r warning=FALSE}
+#Include required packages
+library(dplyr)
+library(tidyr)
+library(caret)
+library(e1071)
+library(factoextra)
+library(ggplot2)
+library(arules)
+library(car)
+library(graphics)
+```
+
+```{r}
+#read in dataset
+cities = read.csv("Final Capstone Dataset.csv")
+```
+
+###Data Preparation
+Remove any fields that will not be used for clustering from the dataset. 
+
+```{r}
+clean_city = cities[,c(-2,-4,-5,-6,-7, -18)]
+```
+
+
+#### Transformations for Scale
+In order to use a clustering analysis, like euclidean, that heavily relies on the distance between data points, we need to ensure that the scale of each variable lies in similar magnitudes.  To check this, plots of a few of the features are shown below.  The result shows that we have some variables in magnitudes of ten, hundreds, and thousands.  Scaling will need to be performed on these variables to make them suitable for clustering.
+
+Can see Below have tenth of degrees and thousands and millions in the same dataset
+
+```{r}
+#look at scale of the numeric features, scaling will be needed
+par(mfrow=c(1,2))
+plot(clean_city$Fam_Income_50_to_100K, clean_city$State_Public_School_Revenue, main="% of Families Income Between $50K-$100K v. State Provided Revenue for Public Schools")
+```
+
+##Data Analysis & Modelling
+###Principal Components Analysis (PCA)
+The first step in the analysis will be to use PCA to determine which features are similar and dissimilar to each other.  SNot only does PCA help to reduce the number of features we work with, it more importantly, enables us to determine which features provide new and unique information to our clustering model and are therefore identified as the most important features to base our clustering model around. 
+
+*Note: PCA can only be performed on numeric features, so only numeric features in our data set will be used for clustering moving forward. In this case all variables are numeric.*
+
+The PCA summary and the chart below shows the cumulative proportion of information that each principal component adds.  To have 80% of the information provided in the dataset we only need 8 principal components.  (90% at 13 PCAs) We will use this information to determine in the next few sections how many many PC are sufficient for our analysis and which features in the data contribute the most to the PC's we are interested in.
+
+```{r}
+#remove the label and ID columns from the dataset
+cleancity_df <- clean_city[, c(-1, -2)]
+
+pc.info = prcomp(cleancity_df,center=T,scale=T)
+summary(pc.info)
+```
+
+```{r}
+vjs = pc.info$sdev^2
+pve = vjs/sum(vjs)
+
+plot(cumsum(pve), type = "o", ylab="Cumulative PVE", xlab="Principal Component")
+```
+
+Reviewing the loadings for the fist 9 PC's, which provide 80% of the information in the data, we see the following characteristics are high contributors to each PC:
+
+  PC1 (Positive) - Business and Employment Fields:
+      Number of Jobs created by existing businesses within the year (JOB_CREATION_BIRTHS), Number of new business openings (ESTABS_ENTRY), Total Job creation by any means (JOB_CREATION), Total Number of Jobs lost  (JOB_DESTRUCTION), number of jobs lost at businesses that are remaining open (JOB_DESTRUCTION_CONTINUERS), Number of businesses that closed in the year (ESTABS_EXIT), N Umber of jobs lost to businesses closing (FIRMDEATH_EMP and JOB_DESTRUCTION_DEATHS), Count of Businesses in the city (ESTAB and FIRM)
+      
+  PC1 (Positive) - Poverty:
+    Poverty_Universe._All_Ages, Poverty_Universe._Age_0.17, Poverty_Universe._Age_5.17_related, SNAP_Recipients_July_18, SNAP_Recipients_July_17, Welfare
+    
+  PC1 (Negative) - Income:
+    Fam_Income_25_to_50K, Fam_Income_Under_25k, Fam_Income_50_to_1000K
+      
+  PC2 (Positive) - Public School Revenue and Expenditures:
+      Total_Public_School_Reveune, Total_Public_School_Expediture, Prct_of_US_Total_School_Expenditure, Public_School_Total_Salary_Expenses,Public_School_Teacher_Salary_Expenses, Regular_Dental_Cleanings, Local_Public_School_Revenue, Estimated_City_Total_Population
+      
+  PC2 (negative) - Physical and Mental Health: 
+      Obesity, High_Blood_Pressure, Diabetes, COPD, Dental Cleanings, Leisure_Time_Exercise, Poor_Physical_Health, Smokers, Lack_of_Sleep, Stroke_Age_65_Up
+
+
+Consoldated the first 6 PCs into the economic categories, resulting in 40 variables selected by PCA (70% of information):
+
++Jobs:
+  estabs
+  estabs_entry
+  estabs_exit
+  job_creation
+  job_creation_births
+  job_creation_continuers
+  job_destruction
+  job_destruction_continuers
+  job_destruction_deaths
+  net_job_creation_rate
+  
++Health:
+  COPD
+  Diabetes
+  Heart_Disease_Age_35_to_64
+  High_Blood_Pressure
+  Leisure_Time_Exercise
+  Obesity
+  Poor_Mental_Health
+  Poor_Physical_Health
+  Regular_Dental_Cleanings
+  Stroke_Age_35_to_64
+  Stroke_Age_65_Up
+  
++Income:
+  Average_Childcare_Expense
+  Estimated_city_number_of_relevant_children_5_to_17_years_old_in_poverty_who_are_related_to_the_householder
+  Estimated_City_Population_5.17
+  Estimated_City_Total_Population
+  Fam_Income_25_to_50K
+  Fam_Income_Over_100k
+  Fam_Income_Under_25k
+  Homeowners
+  Perct_SNAP_Recipients_July_17
+  Public_Housing
+  Renters
+  Wage_Based_Salary
+  Welfare
+  
++Public School System
+  Local_Public_School_Revenue
+  Prct_of_US_Total_School_Expenditure_
+  Public_School_Teacher_Salary_Expenses
+  Public_School_Total_Salary_Expenses
+  Total_Public_School_Expediture
+  Total_Public_School_Reveune
+
+
+
+
+
+
+###PCA1 and PCA2  
+```{r}
+#examine the loadings for PCA 1 and 2
+load = pc.info$rotation 
+load = as.data.frame(load)
+
+ggplot(load, aes(x = load[, 1], y = load[,2], label = rownames(load))) +
+  geom_text(position=position_jitter(width=0.0,height=0.15))
+```
+Really Messy - Need to clean up to focus on the higher correlated variables.  For PC 1 that is less than -0.06 and greater than 0.15.  For PC2 that is less than -0.2 and greater than 0.2.
+```{r}
+PCA1 <- load[,c(1,2)]
+PCA1$PC1[PCA1$PC1 > -0.06 & PCA1$PC1 < 0.15] <- 0.001
+PCA1$PC2[PCA1$PC2 > -0.2 & PCA1$PC2 < 0.2] <- 0.001
+
+#makes a data frame that is easy for me to read
+PCA1ForMe <- load[,c(1,2)]
+PCA1ForMe$PC1[PCA1ForMe$PC1 > -0.05 & PCA1ForMe$PC1 < 0.18] <- ""
+PCA1ForMe$PC2[PCA1ForMe$PC2 > -0.18 & PCA1ForMe$PC2 < 0.18] <- ""
+
+ggplot(PCA1, aes(x = PCA1[, 1], y = PCA1[,2], label = rownames(PCA1))) +
+  geom_text(position=position_jitter(width=0.0,height=0.15))
+```
+
+
+###PCA3 and PCA4  
+```{r}
+#examine the loadings for PCA 3 and 4
+load = pc.info$rotation 
+load = as.data.frame(load)
+
+ggplot(load, aes(x = load[, 3], y = load[ ,4], label = rownames(load))) +
+  geom_text(position=position_jitter(width=0.0,height=0.15))
+```
+
+
+Really Messy - Need to clean up to focus on the higher correlated variables.  For PC 3 that is less than -0.15 and greater than 0.15.  For PC4 that is less than -0.2 and greater than 0.3.
+```{r}
+PCA34 <- load[,c(3,4)]
+PCA34$PC3[PCA34$PC3 > -0.15 & PCA34$PC3 < 0.15] <- 0.001
+PCA34$PC4[PCA34$PC4 > -0.2 & PCA34$PC4 < 0.3] <- 0.001
+
+#makes a data frame that is easy for me to read
+PCA34ForMe <- load[,c(3,4)]
+PCA34ForMe$PC3[PCA34ForMe$PC3 > -0.18 & PCA34ForMe$PC3 < 0.12] <- ""
+PCA34ForMe$PC4[PCA34ForMe$PC4 > -0.18 & PCA34ForMe$PC4 < 0.20] <- ""
+
+ggplot(PCA34, aes(x = PCA34[, 1], y = PCA34[,2], label = rownames(PCA34))) +
+  geom_text(position=position_jitter(width=0.0,height=0.15))
+```
+
+
+
+###PCA5 and PCA6  
+```{r}
+#examine the loadings for PCA 5 and 6
+load = pc.info$rotation 
+load = as.data.frame(load)
+
+ggplot(load, aes(x = load[, 5], y = load[ ,6], label = rownames(load))) +
+  geom_text(position=position_jitter(width=0.0,height=0.15))
+```
+
+
+Really Messy - Need to clean up to focus on the higher correlated variables.  For PC5 that is less than -0.2 and greater than 0.2.  For PC6 that is less than -0.2 and greater than 0.2.
+```{r}
+PCA56 <- load[,c(5,6)]
+PCA56$PC5[PCA56$PC5 > -0.2 & PCA56$PC5 < 0.2] <- 0.001
+PCA56$PC6[PCA56$PC6 > -0.2 & PCA56$PC6 < 0.2] <- 0.001
+
+#makes a data frame that is easy for me to read
+PCA56ForMe <- load[,c(5,6)]
+PCA56ForMe$PC5[PCA56ForMe$PC5 > -0.2 & PCA56ForMe$PC5 < 0.2] <- ""
+PCA56ForMe$PC6[PCA56ForMe$PC6 > -0.2 & PCA56ForMe$PC6 < 0.2] <- ""
+
+ggplot(PCA56, aes(x = PCA56[, 1], y = PCA56[,2], label = rownames(PCA56))) +
+  geom_text(position=position_jitter(width=0.0,height=0.15))
+```
+
+```{r}
+fviz_eig(pc.info)
+```
+
+The biplot below confirms are findings from our inital look at the PCA loadings. We see that the Business and Employment Data is the most important (followed by School Data almost equally, followed by health), will definitely need to be included in the clustering analysis in the next phases.
+
+```{r}
+#create the biplot with rowname filters
+fviz_pca_var(pc.info,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#ffffff", "#f2ebeb", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+###Clustering
+####Pre-assessment of Data Distribution
+
+The PCA results points to Employment, BUsiness, and Public School Data as the most imporant feaures in the data set, in terms of providing information; therefore, these variables will be used to help us cluster our data into groups.  But what should expect these groups to look like?
+
+To help determine this, let's take a look at the distribution of a few of these employment and business stats. The original dataset has been grouped by segregated or integrated. This will allow us to see how the job stats are distributed amoungst the most and least segregated cities.
+
+```{r}
+i_jobs_data <- clean_city[clean_city$Status == "I",]
+s_jobs_data <- clean_city[clean_city$Status == "S",]
+
+par(mfrow=c(1,2))
+
+plot(i_jobs_data$job_destruction_continuers,i_jobs_data$job_creation_births, ylab = "Jobs Created By New Businesses", xlab = "Jobs Lost Continued Business", main = "Integrated Cities")
+#text(i_jobs_data$job_destruction_continuers,i_jobs_data$job_creation_births,labels=i_jobs_data$`ï..City`, cex=0.7, font=1)
+
+plot(s_jobs_data$job_destruction_continuers,s_jobs_data$job_creation_births, ylab = "Jobs Created By New Businesses", xlab = "Jobs Lost Continued Business", main = "Segregated  Cities")
+#text(s_jobs_data$job_destruction_continuers,s_jobs_data$job_creation_births,labels=s_jobs_data$`ï..City`, cex=0.7, font=1)
+```
+
+Boxplots to further understand current state
+```{r}
+par(mfrow=c(1,4))
+boxplot(i_jobs_data$job_destruction_continuers, main = "Integrated Cities", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(s_jobs_data$job_destruction_continuers, main = "Segregated Cities", ylab = "Jobs Lost (Not a result of business closing)")
+
+boxplot(i_jobs_data$job_creation_births, main = "Integrated Cities", ylab = "Jobs Created By New Businesses")
+boxplot(s_jobs_data$job_creation_births, main = "Segregated Cities", ylab = "Jobs Created By New Businesses")
+```
+Job Destruction Cont - Integrated: Median = 47k
+Job Destruction Cont - Segrated: Median = 92k
+
+Job Creation Births - Integrated: Median = 28k
+Job Creation Births - Segrated: Median = 50k
+
+
+```{r}
+par(mfrow=c(1,2))
+
+plot(i_jobs_data$Total_Public_School_Reveune,i_jobs_data$Total_Public_School_Expediture, ylab = "Public School Expenditure", xlab = "Total_Public_School_Reveune", main = "Integrated Cities")
+
+plot(s_jobs_data$Total_Public_School_Reveune,s_jobs_data$Total_Public_School_Expediture, ylab = "Public School Expenditure", xlab = "Total_Public_School_Reveune", main = "Segrated Cities")
+```
+
+Boxplots to further understand current state
+```{r}
+par(mfrow=c(1,4))
+boxplot(i_jobs_data$Total_Public_School_Reveune, main = "Integrated Cities", ylab = "Total_Public_School_Reveune")
+boxplot(s_jobs_data$Total_Public_School_Reveune, main = "Segrated Cities", ylab = "Total_Public_School_Reveune")
+
+boxplot(i_jobs_data$Total_Public_School_Expediture, main = "Integrated Cities", ylab = "Total Public School Expenditure")
+boxplot(s_jobs_data$Total_Public_School_Expediture, main = "Segrated Cities", ylab = "Total Public School Expenditure")
+```
+Total_Public_School_Reveune - Integrated: Median = 850K
+Total_Public_School_Reveune - Segrated: Median = 1.1M
+
+Total_Public_School_Expediture - Integrated: Median = 800K
+Total_Public_School_Expediture - Segrated: Median = 800K
+
+```{r}
+par(mfrow=c(1,2))
+plot(i_jobs_data$High_Blood_Pressure,i_jobs_data$Obesity, ylab = "Obesity", xlab = "High_Blood_Pressure", main = "Integrated Cities")
+plot(s_jobs_data$High_Blood_Pressure,s_jobs_data$Obesity, ylab = "Obesity", xlab = "High_Blood_Pressure", main = "Segrated Cities")
+```
+Boxplots to further understand current state
+```{r}
+par(mfrow=c(1,4))
+boxplot(i_jobs_data$High_Blood_Pressure, main = "Integrated Cities", ylab = "High_Blood_Pressure")
+boxplot(s_jobs_data$High_Blood_Pressure, main = "Segrated Cities", ylab = "High_Blood_Pressure")
+
+boxplot(i_jobs_data$Obesity, main = "Integrated Cities", ylab = "Obesity")
+boxplot(s_jobs_data$Obesity, main = "Segrated Cities", ylab = "Obesity")
+```
+High Blood Pressure - Integrated: Median = 28.8
+High Blood Pressure - Segrated: Median = 32.75
+
+Obesity - Integrated: Median = 28.5
+Obesity - Segrated: Median = 31.2
+
+####Euclidean with Complete Linkage
+Summarize Findings
+```{r}
+#chosing only variables identified by PCA and not any identifiers or labels
+xsubset = clean_city[,c(3, 4, 9, 11, 12, 13, 14, 16, 17, 20, 23, 25, 27, 28, 29, 32, 33, 34, 38, 47, 49, 50, 51, 55, 60, 61, 62, 66, 69, 70, 71, 72, 73, 74, 75, 76, 77)]
+xsubset.scale = scale(xsubset)
+
+############ fitting hierarchical models - complete  ############
+dist.xsubset.scale = dist(xsubset.scale, method="euclidean")
+hc.complete = hclust(dist.xsubset.scale,method="complete") #furthest distance btwn cluster
+
+#Plot Dendrogram
+par(mfrow=c(1,1))
+plot(hc.complete,cex=0.5, labels = clean_city$`ï..City`, hang = -1)
+abline(h=c(12),col=c("purple","red","blue"),lty=2)  # drawing line where the biggest two clusters separate
+```
+
+
+```{r}
+#plotting clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+nclust= 4#change this number for the number of clusters (need 4 because of that first two outlier clusters)
+memEucCom = cutree(hc.complete,k=nclust)#cuts the dendrogram
+par(mfrow=c(1,3))
+
+#job_destruction_continuers and job_creation_births
+plot(clean_city$job_destruction_continuers, clean_city$job_creation_births ,pch=16,main=paste(nclust," Clustering -  Euclidean with Complete Linkage"), ylab = "Jobs Created By New Businesses", xlab = "Jobs Lost (Not a result of business closing)")
+for (i in 1:9)  points(clean_city$job_destruction_continuers[memEucCom == i],clean_city$job_creation_births[memEucCom == i],pch=16,col=colused[i])
+legend(550000, 150000, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(job_destruction_continuers[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(job_creation_births[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Created By New Businesses")
+
+median(xsubset$job_destruction_continuers[memEucCom==1])
+median(xsubset$job_destruction_continuers[memEucCom==2])
+median(xsubset$job_creation_births[memEucCom==1])
+median(xsubset$job_creation_births[memEucCom==2])
+```
+
+Medians for both clusters (job destruction cont.) are the same and both near 92K (one should be near 45K)
+Medians for both clusters (job creation birth) are the same and both near 50K (one should be near 25K)
+
+
+```{r}
+#Total_Public_School_Expediture and Total_Public_School_Reveune
+plot(clean_city$Total_Public_School_Expediture, clean_city$Total_Public_School_Reveune, pch=16, main=paste(nclust," Clustering -  Euclidean with Complete Linkage"), ylab = "Total_Public_School_Reveune", xlab = "Total_Public_School_Expediture")
+for (i in 1:9)  points(clean_city$Total_Public_School_Expediture[memEucCom == i],clean_city$Total_Public_School_Reveune[memEucCom == i],pch=16,col=colused[i])
+legend(20000000, 20000000, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(Total_Public_School_Expediture[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Expediture")
+boxplot(Total_Public_School_Reveune[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Reveune")
+
+median(xsubset$Total_Public_School_Expediture[memEucCom==1])
+median(xsubset$Total_Public_School_Expediture[memEucCom==2])
+median(xsubset$Total_Public_School_Reveune[memEucCom==1])
+median(xsubset$Total_Public_School_Reveune[memEucCom==2])
+```
+Medians for both clusters (Total_Public_School_Expediture) are 721814 and 810004 (around where expected)
+Medians for both clusters (Total_Public_School_Reveune) are 900K and 1.1M (around where expected)
+
+```{r}
+#Obesity and High Blood Pressure
+plot(clean_city$Obesity, clean_city$High_Blood_Pressure, pch=16, main=paste(nclust," Clustering -  Euclidean with Complete Linkage"), ylab = "High_Blood_Pressure", xlab = "Obesity")
+for (i in 1:9)  points(clean_city$Obesity[memEucCom == i],clean_city$High_Blood_Pressure[memEucCom == i],pch=16,col=colused[i])
+legend(43, 35, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(Obesity ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "Obesity")
+boxplot(High_Blood_Pressure ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "High_Blood_Pressure")
+
+median(xsubset$Obesity[memEucCom==1])
+median(xsubset$Obesity[memEucCom==2])
+median(xsubset$High_Blood_Pressure[memEucCom==1])
+median(xsubset$High_Blood_Pressure[memEucCom==2])
+```
+Obesity coming in at 34 and 25 (expected 28 and 31) so a little bit wider than expected but close 
+High Blood Pressure coming in at 34 and 25 (expected 28 and 31) so a little bit wider than expected but close
+
+Truth Table from Eucledean Complete - 
+    I: Cluster 2 (total of 16 data points) Had 11 I's and 5 S's
+    S: Cluster 1 (total of 21 points) Had 12 S's and 9 I's
+    
+Cluster 2 is mostly I's but not identifying S's well... because cluster 1 is half and half I and S.
+    
+Issues with I probably stem from not grouping the busniess/job data well, which is the most important indicator for this dataset.
+
+####Euclidean with Average Linkage
+The dendogram shows 2 pretty full clusters near the bottom of the tree (below the lie drawn at 5.7).  If we try to cut the tree by number of clusters, the two larger clusters get get lumped into one cluster and almost all points in the dataset get assigned to the same cluster. As shown Below:
+```{r}
+#chosing only variables identified by PCA and not any identifiers or labels
+xsubset = clean_city[,c(3, 4, 9, 11, 12, 13, 14, 16, 17, 20, 23, 25, 27, 28, 29, 32, 33, 34, 38, 47, 49, 50, 51, 55, 60, 61, 62, 66, 69, 70, 71, 72, 73, 74, 75, 76, 77)]
+xsubset.scale = scale(xsubset)
+
+############ fitting hierarchical models - Average  ############
+dist.xsubset.scale = dist(xsubset.scale, method="euclidean")
+hc.complete = hclust(dist.xsubset.scale,method="average") #furthest distance btwn cluster
+
+#Plot Dendrogram
+par(mfrow=c(1,1))
+plot(hc.complete,cex=0.5, labels = clean_city$`ï..City`, hang = -1)
+abline(h=c(5.9),col=c("purple","red","blue"),lty=2)  # drawing line where the biggest two clusters separate
+```
+
+```{r}
+#plotting clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+nclust= 4#change this number for the number of clusters (need 4 because of that first two outlier clusters)
+memEucCom = cutree(hc.complete, k=nclust)#cuts the dendrogram
+
+#job_destruction_continuers and job_creation_births
+plot(clean_city$job_destruction_continuers, clean_city$job_creation_births ,pch=16,main=paste(nclust," Clustering -  Euclidean with Average Linkage"), ylab = "Jobs Created By New Businesses", xlab = "Jobs Lost (Not a result of business closing)")
+for (i in 1:10)  points(clean_city$job_destruction_continuers[memEucCom == i],clean_city$job_creation_births[memEucCom == i],pch=16,col=colused[i])
+legend(550000, 250000, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(job_destruction_continuers ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(job_creation_births ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "Jobs Created By New Businesses")
+```
+
+To midigate this, we will instead cut the tree by height and not number of clusters (using 5.7 As the height), forcing the clustering algorithm to create the two larger clusters as separate groups, splitting the assignment of points between groups much more evenly. 
+
+```{r}
+#plotting clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+memEucCom = cutree(hc.complete, h = 5.9)#cuts the dendrogram
+
+#job_destruction_continuers and job_creation_births
+plot(clean_city$job_destruction_continuers, clean_city$job_creation_births ,pch=16,main="Height Clustering -  Euclidean with Average Linkage", ylab = "Jobs Created By New Businesses FY18", xlab = "Jobs Lost (Not a result of business closing)")
+for (i in 1:10)  points(clean_city$job_destruction_continuers[memEucCom == i],clean_city$job_creation_births[memEucCom == i],pch=16,col=colused[i])
+legend(550000, 250000, legend=c("Group 1", "Group 2", "Group 3", "Group 4", "Group 5", "Group 6", "Group 7", "Group 8"), col=c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred"), pch = 19)
+boxplot(job_destruction_continuers ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(job_creation_births ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "Jobs Created By New Businesses")
+```
+
+Doing a better job of spreading out the points but spreading them out way too much. 10 clusters are identified, with the majority of points in three groups.
+
+```{r}
+#Total_Public_School_Expediture and Total_Public_School_Reveune
+plot(clean_city$Total_Public_School_Expediture, clean_city$Total_Public_School_Reveune, pch=16, main="Height Clustering -  Euclidean with Average Linkage", ylab = "Total_Public_School_Reveune", xlab = "Total_Public_School_Expediture")
+for (i in 1:9)  points(clean_city$Total_Public_School_Expediture[memEucCom == i],clean_city$Total_Public_School_Reveune[memEucCom == i],pch=16,col=colused[i])
+legend(20000000, 20000000, legend=c("Group 1", "Group 2", "Group 3", "Group 4", "Group 5", "Group 6", "Group 7", "Group 8"), col=c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred"), pch = 19)
+boxplot(Total_Public_School_Expediture ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Expediture")
+boxplot(Total_Public_School_Reveune ~ memEucCom, data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Reveune")
+```
+
+####Manhattan with Complete Linkage
+```{r}
+#chosing only variables identified by PCA and not any identifiers or labels
+xsubset = clean_city[,c(3, 4, 9, 11, 12, 13, 14, 16, 17, 20, 23, 25, 27, 28, 29, 32, 33, 34, 38, 47, 49, 50, 51, 55, 60, 61, 62, 66, 69, 70, 71, 72, 73, 74, 75, 76, 77)]
+xsubset.scale = scale(xsubset)
+
+############ fitting hierarchical models - Single  ############
+dist.xsubset.scale = dist(xsubset.scale, method="manhattan")
+hc.complete = hclust(dist.xsubset.scale,method="complete") #furthest distance btwn cluster
+
+#Plot Dendrogram
+par(mfrow=c(1,1))
+plot(hc.complete,cex=0.5, labels = clean_city$`ï..City`, hang = -1)
+abline(h=c(45),col=c("purple","red","blue"),lty=2)  # drawing line where the biggest two clusters separate
+```
+
+
+```{r}
+#plotting clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+nclust= 4#change this number for the number of clusters (need 4 because of that first two outlier clusters)
+memEucCom = cutree(hc.complete, k=nclust)#cuts the dendrogram
+par(mfrow=c(1,3))
+#job_destruction_continuers and job_creation_births
+plot(clean_city$job_destruction_continuers, clean_city$job_creation_births ,pch=16,main=paste(nclust," Clustering -  Manhattan with Complete Linkage"), ylab = "Jobs Created By New Businesses", xlab = "Jobs Lost (Not a result of business closing)")
+for (i in 1:10)  points(clean_city$job_destruction_continuers[memEucCom == i],clean_city$job_creation_births[memEucCom == i],pch=16,col=colused[i])
+legend(550000, 250000, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(job_destruction_continuers[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(job_creation_births[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Created By New Businesses")
+
+median(xsubset$job_destruction_continuers[memEucCom=1])
+median(xsubset$job_destruction_continuers[memEucCom=2])
+median(xsubset$job_creation_births[memEucCom=1])
+median(xsubset$job_creation_births[memEucCom=2])
+```
+
+Groupings 1 and 2 and expected medians for the job varaibles looking REAL nice. 
+
+```{r}
+#Total_Public_School_Expediture and Total_Public_School_Reveune
+plot(clean_city$Total_Public_School_Expediture, clean_city$Total_Public_School_Reveune, pch=16, main=paste(nclust," Clustering -  Manhattan with Complete Linkage"), ylab = "Total_Public_School_Reveune", xlab = "Total_Public_School_Expediture")
+for (i in 1:9)  points(clean_city$Total_Public_School_Expediture[memEucCom == i],clean_city$Total_Public_School_Reveune[memEucCom == i],pch=16,col=colused[i])
+legend(20000000, 20000000, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(Total_Public_School_Expediture[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Expediture")
+boxplot(Total_Public_School_Reveune[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Reveune")
+
+median(xsubset$Total_Public_School_Expediture[memEucCom==1])
+median(xsubset$Total_Public_School_Expediture[memEucCom==2])
+median(xsubset$Total_Public_School_Reveune[memEucCom==1])
+median(xsubset$Total_Public_School_Reveune[memEucCom==2])
+```
+Again, clusters 1 and 2 medians look great.
+
+```{r}
+#Obesity and High Blood Pressure
+plot(clean_city$Obesity, clean_city$High_Blood_Pressure, pch=16, main=paste(nclust," Clustering -  Manhattan with Complete Linkage"), ylab = "High_Blood_Pressure", xlab = "Obesity")
+for (i in 1:9)  points(clean_city$Obesity[memEucCom == i],clean_city$High_Blood_Pressure[memEucCom == i],pch=16,col=colused[i])
+legend(43, 35, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(Obesity[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Obesity")
+boxplot(High_Blood_Pressure[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "High_Blood_Pressure")
+
+median(xsubset$Obesity[memEucCom==1])
+median(xsubset$Obesity[memEucCom==2])
+median(xsubset$High_Blood_Pressure[memEucCom==1])
+median(xsubset$High_Blood_Pressure[memEucCom==2])
+```
+On point
+
+Truth Table from Manhattan Complete - 
+    I: Cluster 2 (total of 24 data points) Had 17 I's and 7 S's
+    S: Cluster 1 (total of 13 points) Had 10 S's and three I's
+    
+Cluster 2 is basically I's 
+Cluster 1 is basically S's without the outliers of the big cities
+
+####Manhattan with Average Linkage
+Same issue as Eucledean Average - either all one group or multiple tiny groups
+```{r}
+#chosing only variables identified by PCA and not any identifiers or labels
+xsubset = clean_city[,c(3, 4, 9, 11, 12, 13, 14, 16, 17, 20, 23, 25, 27, 28, 29, 32, 33, 34, 38, 47, 49, 50, 51, 55, 60, 61, 62, 66, 69, 70, 71, 72, 73, 74, 75, 76, 77)]
+xsubset.scale = scale(xsubset)
+
+############ fitting hierarchical models - Single  ############
+dist.xsubset.scale = dist(xsubset.scale, method="manhattan")
+hc.complete = hclust(dist.xsubset.scale,method="average") #furthest distance btwn cluster
+
+#Plot Dendrogram
+par(mfrow=c(1,1))
+plot(hc.complete,cex=0.5,labels=F)
+abline(h=c(32),col=c("purple","red","blue"),lty=2)  # drawing line where the biggest two clusters separate
+```
+All one GRoup
+```{r}
+#plotting clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+nclust= 4#change this number for the number of clusters (need 4 because of that first two outlier clusters)
+memEucCom = cutree(hc.complete, k=nclust)#cuts the dendrogram
+
+#job_destruction_continuers and job_creation_births
+plot(clean_city$job_destruction_continuers, clean_city$job_creation_births ,pch=16,main=paste(nclust," Clustering -  Manhattan with Average Linkage"), ylab = "Jobs Created By New Businesses FY18", xlab = "Jobs Lost (Not a result of business closing)")
+for (i in 1:10)  points(clean_city$job_destruction_continuers[memEucCom == i],clean_city$job_creation_births[memEucCom == i],pch=16,col=colused[i])
+legend(550000, 250000, legend=c("Group 1", "Group 2", "Group 3", "Group 4", "Group 5", "Group 6", "Group 7", "Group 8"), col=c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred"), pch = 19)
+boxplot(job_destruction_continuers[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(job_creation_births[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Created By New Businesses")
+
+median(xsubset$job_destruction_continuers[memEucCom=1])
+median(xsubset$job_destruction_continuers[memEucCom=2])
+median(xsubset$job_creation_births[memEucCom=1])
+median(xsubset$job_creation_births[memEucCom=2])
+```
+
+Bunch of tiny groups
+```{r}
+#plotting clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+nclust= 4#change this number for the number of clusters (need 4 because of that first two outlier clusters)
+memEucCom = cutree(hc.complete, h=30)#cuts the dendrogram
+
+#job_destruction_continuers and job_creation_births
+plot(clean_city$job_destruction_continuers, clean_city$job_creation_births ,pch=16,main=paste(nclust," Clustering -  Manhattan with Average Linkage"), ylab = "Jobs Created By New Businesses FY18", xlab = "Jobs Lost (Not a result of business closing)")
+for (i in 1:10)  points(clean_city$job_destruction_continuers[memEucCom == i],clean_city$job_creation_births[memEucCom == i],pch=16,col=colused[i])
+legend(550000, 250000, legend=c("Group 1", "Group 2", "Group 3", "Group 4", "Group 5", "Group 6", "Group 7", "Group 8"), col=c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred"), pch = 19)
+boxplot(job_destruction_continuers[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(job_creation_births[memEucCom<3] ~ memEucCom[memEucCom<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Created By New Businesses")
+
+median(xsubset$job_destruction_continuers[memEucCom=1])
+median(xsubset$job_destruction_continuers[memEucCom=2])
+median(xsubset$job_creation_births[memEucCom=1])
+median(xsubset$job_creation_births[memEucCom=2])
+```
+
+####K-means Non-hierarchical Clustierting
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+############ fitting non-hierarchical models - K-means with p = 38 variables ############
+
+#chosing only variables identified by PCA and not any identifiers or labels
+xsubset = clean_city[,c(3, 4, 9, 11, 12, 13, 14, 16, 17, 20, 23, 25, 27, 28, 29, 32, 33, 34, 38, 47, 49, 50, 51, 55, 60, 61, 62, 66, 69, 70, 71, 72, 73, 74, 75, 76, 77)]
+xsubset.scale = scale(xsubset)
+par(mfrow=c(1,3))
+set.seed(2071, sample.kind = "Rounding")
+
+nclust=3
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+
+#repeat the following a few times
+membkmean = kmeans(xsubset.scale,nclust)$cluster
+#plotting clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+
+#job_destruction_continuers and job_creation_births
+plot(clean_city$job_destruction_continuers, clean_city$job_creation_births ,pch=16,main=paste(nclust," Clustering -  K Means"), ylab = "Jobs Created By New Businesses FY18", xlab = "Jobs Lost (Not a result of business closing)")
+for (i in 1:10)  points(clean_city$job_destruction_continuers[membkmean == i],clean_city$job_creation_births[membkmean == i],pch=16,col=colused[i])
+legend(550000, 250000, legend=c("Group 1", "Group 2", "Group 3"), col=c("turquoise3", "red", "black"), pch = 19)
+boxplot(job_destruction_continuers[membkmean<3] ~ membkmean[membkmean<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Lost (Not a result of business closing)")
+boxplot(job_creation_births[membkmean<3] ~ membkmean[membkmean<3], data = xsubset, xlab = "Cluster Number", ylab = "Jobs Created By New Businesses")
+
+median(xsubset$job_destruction_continuers[membkmean==1])
+median(xsubset$job_destruction_continuers[membkmean==2])
+
+median(xsubset$job_creation_births[membkmean==1])
+median(xsubset$job_creation_births[membkmean==2])
+
+```
+
+```{r}
+set.seed(2071, sample.kind = "Rounding")
+#Total_Public_School_Expediture and Total_Public_School_Reveune
+plot(clean_city$Total_Public_School_Expediture, clean_city$Total_Public_School_Reveune, pch=16, main=paste(nclust," Clustering -  K Means"), ylab = "Total_Public_School_Reveune", xlab = "Total_Public_School_Expediture")
+for (i in 1:9)  points(clean_city$Total_Public_School_Expediture[membkmean == i],clean_city$Total_Public_School_Reveune[membkmean == i],pch=16,col=colused[i])
+legend(20000000, 20000000, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(Total_Public_School_Expediture[membkmean<3] ~ membkmean[membkmean<3], data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Expediture")
+boxplot(Total_Public_School_Reveune[membkmean<3] ~ membkmean[membkmean<3], data = xsubset, xlab = "Cluster Number", ylab = "Total_Public_School_Reveune")
+
+median(xsubset$Total_Public_School_Expediture[membkmean==1])
+median(xsubset$Total_Public_School_Expediture[membkmean==2])
+median(xsubset$Total_Public_School_Reveune[membkmean==1])
+median(xsubset$Total_Public_School_Reveune[membkmean==2])
+```
+
+```{r}
+#Obesity and High Blood Pressure
+plot(clean_city$Obesity, clean_city$High_Blood_Pressure, pch=16, main=paste(nclust," Clustering -  K Means"), ylab = "High_Blood_Pressure", xlab = "Obesity")
+for (i in 1:9)  points(clean_city$Obesity[membkmean == i],clean_city$High_Blood_Pressure[membkmean == i],pch=16,col=colused[i])
+legend(43, 35, legend=c("Group 1", "Group 2", "Group 3", "Group 4"), col=c("turquoise3", "red", "black", "orange"), pch = 19)
+boxplot(Obesity[membkmean<3] ~ membkmean[membkmean<3], data = xsubset, xlab = "Cluster Number", ylab = "Obesity")
+boxplot(High_Blood_Pressure[membkmean<3] ~ membkmean[membkmean<3], data = xsubset, xlab = "Cluster Number", ylab = "High_Blood_Pressure")
+
+median(xsubset$Obesity[membkmean==1])
+median(xsubset$Obesity[membkmean==2])
+median(xsubset$High_Blood_Pressure[membkmean==1])
+median(xsubset$High_Blood_Pressure[membkmean==2])
+```
+
+Truth Table from K Means - With Seed 2071
+    I: Cluster 2 (total of 23 data points) Had 16 I's and 7 S's
+    S: Cluster 1 (total of 16 points) Had 12 S's and 4 I's
+
+##Association Rules
+Now that we have accepted K Means has the best clustering model, we can select the rows in our original dataset that are a part of group 1 and group 2 which were correct and build association rules for those cities  We will include all avaiable features in our dataset for the association analysis that were Identified as important variables by PCA.
+
+###Integrated Cities
+
+```{r}
+#read in dataset
+KM_Int = read.csv("KMeans Int Correct.csv")
+#remove label and ID columns
+KM_Int <- KM_Int[, c(-1,-2,-4,-5)]
+```
+
+
+Make all variables Discrete Ranges for the analysis
+```{r}
+KM_Int$Estimated_City_Total_Population = discretize(KM_Int$Estimated_City_Total_Population, "fixed", breaks=c(min(KM_Int$Estimated_City_Total_Population), quantile(KM_Int$Estimated_City_Total_Population, 0.25), quantile(KM_Int$Estimated_City_Total_Population, 0.75), max(KM_Int$Estimated_City_Total_Population)), ordered=T)
+KM_Int$Estimated_City_Population_5.17 = discretize(KM_Int$Estimated_City_Population_5-17, "fixed", breaks=c(min(KM_Int$Estimated_City_Population_5-17), quantile(KM_Int$Estimated_City_Population_5-17, 0.25), quantile(KM_Int$Estimated_City_Population_5-17, 0.75), max(KM_Int$Estimated_City_Population_5-17)), ordered=T)
+KM_Int$SNAP_Recipients_July_17 = discretize(KM_Int$SNAP_Recipients_July_17, "fixed", breaks=c(min(KM_Int$SNAP_Recipients_July_17), quantile(KM_Int$SNAP_Recipients_July_17, 0.25), quantile(KM_Int$SNAP_Recipients_July_17, 0.75), max(KM_Int$SNAP_Recipients_July_17)), ordered=T)
+KM_Int$Total_Public_School_Expediture = discretize(KM_Int$Total_Public_School_Expediture, "fixed", breaks=c(min(KM_Int$Total_Public_School_Expediture), quantile(KM_Int$Total_Public_School_Expediture, 0.25), quantile(KM_Int$Total_Public_School_Expediture, 0.75), max(KM_Int$Total_Public_School_Expediture)), ordered=T)
+KM_Int$Prct_of_US_Total_School_Expenditure_ = discretize(KM_Int$Prct_of_US_Total_School_Expenditure_, "fixed", breaks=c(min(KM_Int$Prct_of_US_Total_School_Expenditure_), quantile(KM_Int$Prct_of_US_Total_School_Expenditure_, 0.25), quantile(KM_Int$Prct_of_US_Total_School_Expenditure_, 0.75), max(KM_Int$Prct_of_US_Total_School_Expenditure_)), ordered=T)
+KM_Int$Public_School_Teacher_Salary_Expenses = discretize(KM_Int$Public_School_Teacher_Salary_Expenses, "fixed", breaks=c(min(KM_Int$Public_School_Teacher_Salary_Expenses), quantile(KM_Int$Public_School_Teacher_Salary_Expenses, 0.25), quantile(KM_Int$Public_School_Teacher_Salary_Expenses, 0.75), max(KM_Int$Public_School_Teacher_Salary_Expenses)), ordered=T)
+KM_Int$Total_Public_School_Reveune = discretize(KM_Int$Total_Public_School_Reveune, "fixed", breaks=c(min(KM_Int$Total_Public_School_Reveune), quantile(KM_Int$Total_Public_School_Reveune, 0.25), quantile(KM_Int$Total_Public_School_Reveune, 0.75), max(KM_Int$Total_Public_School_Reveune)), ordered=T)
+KM_Int$State_Public_School_Revenue = discretize(KM_Int$State_Public_School_Revenue, "fixed", breaks=c(min(KM_Int$State_Public_School_Revenue), quantile(KM_Int$State_Public_School_Revenue, 0.25), quantile(KM_Int$State_Public_School_Revenue, 0.75), max(KM_Int$State_Public_School_Revenue)), ordered=T)
+KM_Int$Local_Public_School_Revenue = discretize(KM_Int$Local_Public_School_Revenue, "fixed", breaks=c(min(KM_Int$Local_Public_School_Revenue), quantile(KM_Int$Local_Public_School_Revenue, 0.25), quantile(KM_Int$Local_Public_School_Revenue, 0.75), max(KM_Int$Local_Public_School_Revenue)), ordered=T)
+KM_Int$estabs = discretize(KM_Int$estabs, "fixed", breaks=c(min(KM_Int$estabs), quantile(KM_Int$estabs, 0.25), quantile(KM_Int$estabs, 0.75), max(KM_Int$estabs)), ordered=T)
+KM_Int$estabs_entry = discretize(KM_Int$estabs_entry, "fixed", breaks=c(min(KM_Int$estabs_entry), quantile(KM_Int$estabs_entry, 0.25), quantile(KM_Int$estabs_entry, 0.75), max(KM_Int$estabs_entry)), ordered=T)
+KM_Int$estabs_exit = discretize(KM_Int$estabs_exit, "fixed", breaks=c(min(KM_Int$estabs_exit), quantile(KM_Int$estabs_exit, 0.25), quantile(KM_Int$estabs_exit, 0.75), max(KM_Int$estabs_exit)), ordered=T)
+KM_Int$job_creation = discretize(KM_Int$job_creation, "fixed", breaks=c(min(KM_Int$job_creation), quantile(KM_Int$job_creation, 0.25), quantile(KM_Int$job_creation, 0.75), max(KM_Int$job_creation)), ordered=T)
+KM_Int$job_creation_births = discretize(KM_Int$job_creation_births, "fixed", breaks=c(min(KM_Int$job_creation_births), quantile(KM_Int$job_creation_births, 0.25), quantile(KM_Int$job_creation_births, 0.75), max(KM_Int$job_creation_births)), ordered=T)
+KM_Int$job_creation_continuers = discretize(KM_Int$job_creation_continuers, "fixed", breaks=c(min(KM_Int$job_creation_continuers), quantile(KM_Int$job_creation_continuers, 0.25), quantile(KM_Int$job_creation_continuers, 0.75), max(KM_Int$job_creation_continuers)), ordered=T)
+KM_Int$job_destruction = discretize(KM_Int$job_destruction, "fixed", breaks=c(min(KM_Int$job_destruction), quantile(KM_Int$job_destruction, 0.25), quantile(KM_Int$job_destruction, 0.75), max(KM_Int$job_destruction)), ordered=T)
+KM_Int$job_destruction_deaths = discretize(KM_Int$job_destruction_deaths, "fixed", breaks=c(min(KM_Int$job_destruction_deaths), quantile(KM_Int$job_destruction_deaths, 0.25), quantile(KM_Int$job_destruction_deaths, 0.75), max(KM_Int$job_destruction_deaths)), ordered=T)
+KM_Int$job_destruction_continuers = discretize(KM_Int$job_destruction_continuers, "fixed", breaks=c(min(KM_Int$job_destruction_continuers), quantile(KM_Int$job_destruction_continuers, 0.25), quantile(KM_Int$job_destruction_continuers, 0.75), max(KM_Int$job_destruction_continuers)), ordered=T)
+KM_Int$net_job_creation_rate = discretize(KM_Int$net_job_creation_rate, "fixed", breaks=c(min(KM_Int$net_job_creation_rate), quantile(KM_Int$net_job_creation_rate, 0.25), quantile(KM_Int$net_job_creation_rate, 0.75), max(KM_Int$net_job_creation_rate)), ordered=T)
+KM_Int$Fam_Income_50_to_100K = discretize(KM_Int$Fam_Income_50_to_100K, "fixed", breaks=c(min(KM_Int$Fam_Income_50_to_100K), quantile(KM_Int$Fam_Income_50_to_100K, 0.25), quantile(KM_Int$Fam_Income_50_to_100K, 0.75), max(KM_Int$Fam_Income_50_to_100K)), ordered=T)
+KM_Int$Fam_Income_Under_25k = discretize(KM_Int$Fam_Income_Under_25k, "fixed", breaks=c(min(KM_Int$Fam_Income_Under_25k), quantile(KM_Int$Fam_Income_Under_25k, 0.25), quantile(KM_Int$Fam_Income_Under_25k, 0.75), max(KM_Int$Fam_Income_Under_25k)), ordered=T)
+KM_Int$Homeowners = discretize(KM_Int$Homeowners, "fixed", breaks=c(min(KM_Int$Homeowners), quantile(KM_Int$Homeowners, 0.25), quantile(KM_Int$Homeowners, 0.75), max(KM_Int$Homeowners)), ordered=T)
+KM_Int$Renters = discretize(KM_Int$Renters, "fixed", breaks=c(min(KM_Int$Renters), quantile(KM_Int$Renters, 0.25), quantile(KM_Int$Renters, 0.75), max(KM_Int$Renters)), ordered=T)
+KM_Int$Welfare = discretize(KM_Int$Welfare, "fixed", breaks=c(min(KM_Int$Welfare), quantile(KM_Int$Welfare, 0.25), quantile(KM_Int$Welfare, 0.75), max(KM_Int$Welfare)), ordered=T)
+KM_Int$Heart_Disease_Age_35_to_64 = discretize(KM_Int$Heart_Disease_Age_35_to_64, "fixed", breaks=c(min(KM_Int$Heart_Disease_Age_35_to_64), quantile(KM_Int$Heart_Disease_Age_35_to_64, 0.25), quantile(KM_Int$Heart_Disease_Age_35_to_64, 0.75), max(KM_Int$Heart_Disease_Age_35_to_64)), ordered=T)
+KM_Int$Heart_Disease_Age_65_Up = discretize(KM_Int$Heart_Disease_Age_65_Up, "fixed", breaks=c(min(KM_Int$Heart_Disease_Age_65_Up), quantile(KM_Int$Heart_Disease_Age_65_Up, 0.25), quantile(KM_Int$Heart_Disease_Age_65_Up, 0.75), max(KM_Int$Heart_Disease_Age_65_Up)), ordered=T)
+KM_Int$Stroke_Age_35_to_64 = discretize(KM_Int$Stroke_Age_35_to_64, "fixed", breaks=c(min(KM_Int$Stroke_Age_35_to_64), quantile(KM_Int$Stroke_Age_35_to_64, 0.25), quantile(KM_Int$Stroke_Age_35_to_64, 0.75), max(KM_Int$Stroke_Age_35_to_64)), ordered=T)
+KM_Int$High_Blood_Pressure = discretize(KM_Int$High_Blood_Pressure, "fixed", breaks=c(min(KM_Int$High_Blood_Pressure), quantile(KM_Int$High_Blood_Pressure, 0.25), quantile(KM_Int$High_Blood_Pressure, 0.75), max(KM_Int$High_Blood_Pressure)), ordered=T)
+KM_Int$COPD = discretize(KM_Int$COPD, "fixed", breaks=c(min(KM_Int$COPD), quantile(KM_Int$COPD, 0.25), quantile(KM_Int$COPD, 0.75), max(KM_Int$COPD)), ordered=T)
+KM_Int$Smokers = discretize(KM_Int$Smokers, "fixed", breaks=c(min(KM_Int$Smokers), quantile(KM_Int$Smokers, 0.25), quantile(KM_Int$Smokers, 0.75), max(KM_Int$Smokers)), ordered=T)
+KM_Int$Regular_Dental_Cleanings = discretize(KM_Int$Regular_Dental_Cleanings, "fixed", breaks=c(min(KM_Int$Regular_Dental_Cleanings), quantile(KM_Int$Regular_Dental_Cleanings, 0.25), quantile(KM_Int$Regular_Dental_Cleanings, 0.75), max(KM_Int$Regular_Dental_Cleanings)), ordered=T)
+KM_Int$Diabetes = discretize(KM_Int$Diabetes, "fixed", breaks=c(min(KM_Int$Diabetes), quantile(KM_Int$Diabetes, 0.25), quantile(KM_Int$Diabetes, 0.75), max(KM_Int$Diabetes)), ordered=T)
+KM_Int$Leisure_Time_Exercise = discretize(KM_Int$Leisure_Time_Exercise, "fixed", breaks=c(min(KM_Int$Leisure_Time_Exercise), quantile(KM_Int$Leisure_Time_Exercise, 0.25), quantile(KM_Int$Leisure_Time_Exercise, 0.75), max(KM_Int$Leisure_Time_Exercise)), ordered=T)
+KM_Int$Poor_Mental_Health = discretize(KM_Int$Poor_Mental_Health, "fixed", breaks=c(min(KM_Int$Poor_Mental_Health), quantile(KM_Int$Poor_Mental_Health, 0.25), quantile(KM_Int$Poor_Mental_Health, 0.75), max(KM_Int$Poor_Mental_Health)), ordered=T)
+KM_Int$Obesity = discretize(KM_Int$Obesity, "fixed", breaks=c(min(KM_Int$Obesity), quantile(KM_Int$Obesity, 0.25), quantile(KM_Int$Obesity, 0.75), max(KM_Int$Obesity)), ordered=T)
+KM_Int$Poor_Physical_Health = discretize(KM_Int$Poor_Physical_Health, "fixed", breaks=c(min(KM_Int$Poor_Physical_Health), quantile(KM_Int$Poor_Physical_Health, 0.25), quantile(KM_Int$Poor_Physical_Health, 0.75), max(KM_Int$Poor_Physical_Health)), ordered=T)
+KM_Int$Lack_of_Sleep = discretize(KM_Int$Lack_of_Sleep, "fixed", breaks=c(min(KM_Int$Lack_of_Sleep), quantile(KM_Int$Lack_of_Sleep, 0.25), quantile(KM_Int$Lack_of_Sleep, 0.75), max(KM_Int$Lack_of_Sleep)), ordered=T)
+```
+
+```{r}
+rules = apriori(KM_Int, parameter = list(support = 0.2, confidence = 0.8))
+summary(rules)
+```
+
+```{r }
+nonRedunt= which(interestMeasure(rules, measure = "improvement", quality_measure = "confidence") >= 0)
+#pick out rules that are not redunuant (only pick rules that are an improvemnet with the same consquent)
+
+summary(rules[nonRedunt])
+rulesClean = rules[nonRedunt]
+```
+
+Taking a look at the top 10 rules, in descending order of lift provided:
+```{r}
+highLift = subset(rulesClean, subset = lift > 1 & confidence > 0.65)
+subRules = head(highLift, n = 10, by = "lift") 
+inspect(subRules)
+```
+
+
+```{r}
+#right hand Side I
+highLift = subset(rulesClean, subset = lift > 1 & confidence > 0.60)
+myrhs = rhs(rulesClean)
+iors = which(myrhs %in% c("Status=I"))
+#inspect(head(rulesClean[ iors ], n=100, by="lift" ))
+```
+
+```{r}
+#right hand Side S
+highLift = subset(rulesClean, subset = lift > 1 & confidence > 0.60)
+myrhs = rhs(rulesClean)
+iors = which(myrhs %in% c("Status=S"))
+#inspect(head(rulesClean[ iors ], n=100, by="lift" ))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
